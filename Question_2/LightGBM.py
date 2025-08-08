@@ -3,14 +3,14 @@ import numpy as np
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
 from sklearn.metrics import mean_squared_error
-import xgboost as xgb
+import lightgbm as lgb
 
 # 1. 读取数据
 train = pd.read_csv("./Data/input_data/df_movies_train.csv")
 test = pd.read_csv("./Data/input_data/df_movies_test.csv")
 
 
-# 2. 特征工程，结合你的EDA结论
+# 2. 特征工程（结合你的EDA结论）
 def type_group(genres, group):
     if pd.isna(genres):
         return 0
@@ -58,7 +58,7 @@ for col in feature_cols:
         train[col] = train[col].fillna(mean_val)
         test[col] = test[col].fillna(mean_val)
 
-# 4. 类别特征编码（LabelEncoder，每一列分开编码）
+# 4. 类别特征编码（LightGBM支持整数编码，LabelEncoder最简单）
 cat_cols = [
     "original_language",
     "genres",
@@ -75,7 +75,7 @@ for col in cat_cols:
     train[col] = le.transform(train[col].astype(str))
     test[col] = le.transform(test[col].astype(str))
 
-# 5. 选择最终特征
+# 5. 最终特征
 all_features = [
     "runtime",
     "original_language",
@@ -99,39 +99,67 @@ X_train, X_val, y_train, y_val = train_test_split(
     train[all_features], train["rating"], test_size=0.2, random_state=42
 )
 
-# 7. XGBoost模型训练
-xgb_model = xgb.XGBRegressor(
-    n_estimators=200,
-    max_depth=7,
-    learning_rate=0.08,
-    subsample=0.9,
-    colsample_bytree=0.8,
-    random_state=42,
-    tree_method="auto",
+# 7. LightGBM模型训练
+lgb_train = lgb.Dataset(
+    X_train,
+    label=y_train,
+    categorical_feature=[all_features.index(col) for col in cat_cols],
 )
-# xgb_model.fit(
-#     X_train, y_train, eval_set=[(X_val, y_val)], early_stopping_rounds=30, verbose=50
+lgb_val = lgb.Dataset(
+    X_val,
+    label=y_val,
+    categorical_feature=[all_features.index(col) for col in cat_cols],
+)
+
+params = {
+    "objective": "regression",
+    "metric": "rmse",
+    "learning_rate": 0.08,
+    "num_leaves": 31,
+    "max_depth": 7,
+    "feature_fraction": 0.8,
+    "bagging_fraction": 0.9,
+    "bagging_freq": 1,
+    "seed": 42,
+    "verbose": -1,
+}
+
+# gbm = lgb.train(
+#     params,
+#     lgb_train,
+#     num_boost_round=500,
+#     valid_sets=[lgb_train, lgb_val],
+#     valid_names=["train", "valid"],
+#     early_stopping_rounds=30,
+#     verbose_eval=50,
 # )
-#  XGBoost 的某些版本（特别是较老的 scikit-learn 风格 API 版本）不支持 early_stopping_rounds 作为 fit 方法的参数
+# 当前LightGBM的版本（或你的 lgb.train 调用）不支持 early_stopping_rounds 作为关键字参数
 try:
-    xgb_model.fit(
-        X_train,
-        y_train,
-        eval_set=[(X_val, y_val)],
+    gbm = lgb.train(
+        params,
+        lgb_train,
+        num_boost_round=500,
+        valid_sets=[lgb_train, lgb_val],
+        valid_names=["train", "valid"],
         early_stopping_rounds=30,
-        verbose=50,
+        verbose_eval=50,
     )
-except TypeError:
-    xgb_model.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=50)
+except:
+    gbm = lgb.train(
+        params,
+        lgb_train,
+        num_boost_round=200,
+        valid_sets=[lgb_train, lgb_val],
+        valid_names=["train", "valid"],
+    )
 
-
-# 8. 验证集RMSE输出
-val_pred = xgb_model.predict(X_val)
+# 8. 验证集RMSE
+val_pred = gbm.predict(X_val, num_iteration=gbm.best_iteration)
 rmse = np.sqrt(mean_squared_error(y_val, val_pred))
 print(f"验证集RMSE: {rmse:.4f}")
 
 # 9. 测试集预测和结果保存
-test_pred = xgb_model.predict(test[all_features])
+test_pred = gbm.predict(test[all_features], num_iteration=gbm.best_iteration)
 result = pd.DataFrame({"id": test["id"], "rating": np.round(test_pred, 2)})
 result.to_csv("./Data/output_result/df_result_1.csv", index=False)
 print("已保存预测结果到 ./Data/output_result/df_result_1.csv")

@@ -111,7 +111,7 @@ X_train, X_val, y_train, y_val = train_test_split(
 
 # 7. CatBoost训练
 model = CatBoostRegressor(
-    iterations=300,
+    iterations=200,
     learning_rate=0.08,
     depth=7,
     loss_function="RMSE",
