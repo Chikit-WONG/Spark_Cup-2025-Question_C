@@ -1,4 +1,3 @@
-# 模拟退火算法，全数据批量运行，所有条件约束
 import pandas as pd
 import numpy as np
 import random
@@ -19,19 +18,21 @@ rating_dict = dict(zip(df_rating["id"], df_rating["rating"]))
 rooms = df_cinema["room"].tolist()
 movies = df_movies["id"].tolist()
 
-# 电影信息预处理
+# ========== 2. 电影信息预处理（genres_set用逗号分割成集合） ==========
 movie_info = {}
 for _, row in df_movies.iterrows():
     mid = row["id"]
+    genre_set = set([g.strip() for g in str(row["genres"]).split(",") if g.strip()])
     movie_info[mid] = {
         "runtime": int(np.ceil(row["runtime"] / 30) * 30),
         "basic_price": row["basic_price"],
         "versions": row["version"].split("|"),
         "original_language": row["original_language"],
         "genres": row["genres"],
+        "genres_set": genre_set,
     }
 
-# 放映厅信息预处理
+# ========== 3. 放映厅信息预处理 ==========
 room_info = {}
 for _, row in df_cinema.iterrows():
     rid = row["room"]
@@ -44,7 +45,7 @@ for _, row in df_cinema.iterrows():
         room_info[rid]["versions"].append("IMAX")
 
 
-# ========== 2. 全部可用时间点 ==========
+# ========== 4. 全部可用时间点 ==========
 def generate_time_slots(start=600, end=1800, step=15):
     return [i for i in range(start, end, step)]
 
@@ -52,7 +53,7 @@ def generate_time_slots(start=600, end=1800, step=15):
 time_slots = generate_time_slots()
 
 
-# ========== 3. 业务函数 ==========
+# ========== 5. 业务函数 ==========
 def get_attendance(room, movie):
     return int(room_info[room]["capacity"] * rating_dict[movie] / 10)
 
@@ -94,7 +95,7 @@ def format_time(minutes):
     return f"{hour:02d}:{minute:02d}"
 
 
-# ========== 4. 检查排片所有硬约束 ==========
+# ========== 6. 检查所有硬约束（含多题材） ==========
 def is_feasible(schedule):
     # a. 每厅同一时间不重叠，每两场间隔≥15min
     for room in schedule:
@@ -134,13 +135,13 @@ def is_feasible(schedule):
                 total += movie_info[m2]["runtime"]
             if total > 420:  # 7小时=420min
                 return False
-    # d. 题材播放次数上下限
+    # d. 题材播放次数上下限（多题材）
     genre_count = {}
     for room in schedule:
         for show in schedule[room]:
             m = show["movie"]
-            genre = movie_info[m]["genres"]
-            genre_count[genre] = genre_count.get(genre, 0) + 1
+            for g in movie_info[m]["genres_set"]:
+                genre_count[g] = genre_count.get(g, 0) + 1
     genre_limit = {
         "Animation": (1, 5),
         "Horror": (0, 3),
@@ -151,22 +152,24 @@ def is_feasible(schedule):
         cnt = genre_count.get(g, 0)
         if cnt < minv or cnt > maxv:
             return False
-    # e. 题材播放时间段限制
+    # e. 题材播放时间段约束（多题材）
     for room in schedule:
         for show in schedule[room]:
             m = show["movie"]
-            genre = movie_info[m]["genres"]
             t = show["time"]
-            if genre in ["Animation", "Family"]:
-                if t >= 1140:  # 19:00
+            genres = movie_info[m]["genres_set"]
+            # Animation、Family：最晚19:00前
+            if "Animation" in genres or "Family" in genres:
+                if t >= 1140:
                     return False
-            if genre in ["Horror", "Thriller"]:
-                if t < 1260:  # 21:00
+            # Horror、Thriller：最早21:00后
+            if "Horror" in genres or "Thriller" in genres:
+                if t < 1260:
                     return False
     return True
 
 
-# ========== 5. 计算净收益 ==========
+# ========== 7. 计算净收益 ==========
 def compute_objective(schedule):
     obj = 0
     for room in schedule:
@@ -180,7 +183,7 @@ def compute_objective(schedule):
     return obj
 
 
-# ========== 6. 生成初始解（贪心，评分高优先） ==========
+# ========== 8. 生成初始解（贪心，评分高优先） ==========
 def generate_initial_solution():
     schedule = {room: [] for room in rooms}
     movies_sorted = sorted(movies, key=lambda m: rating_dict[m], reverse=True)
@@ -205,7 +208,7 @@ def generate_initial_solution():
     return schedule
 
 
-# ========== 7. 邻域操作 ==========
+# ========== 9. 邻域操作 ==========
 def neighbor(schedule):
     new_schedule = copy.deepcopy(schedule)
     room = random.choice(rooms)
@@ -235,7 +238,7 @@ def neighbor(schedule):
     return new_schedule
 
 
-# ========== 8. 模拟退火主流程 ==========
+# ========== 10. 模拟退火主流程 ==========
 def simulated_annealing(max_iter=1000, T0=1500, Tmin=1e-3, alpha=0.97):
     curr = generate_initial_solution()
     while not is_feasible(curr):
@@ -262,13 +265,12 @@ def simulated_annealing(max_iter=1000, T0=1500, Tmin=1e-3, alpha=0.97):
     return best, best_score
 
 
-# ========== 9. 运行并输出 ==========
+# ========== 11. 运行并输出 ==========
 if __name__ == "__main__":
     best_schedule, best_score = simulated_annealing(
         max_iter=400, T0=1500, Tmin=0.5, alpha=0.97
     )
     print("最优净收益：", best_score)
-    # 整理输出结果
     result = []
     for room in best_schedule:
         for show in best_schedule[room]:
