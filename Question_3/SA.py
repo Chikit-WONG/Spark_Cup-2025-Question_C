@@ -3,6 +3,7 @@ import numpy as np
 import random
 import copy
 from tqdm import tqdm
+import multiprocessing as mp
 
 # ========== 1. 读入数据 ==========
 cinema_path = "./Data/input_data/df_cinema.csv"
@@ -18,7 +19,7 @@ rating_dict = dict(zip(df_rating["id"], df_rating["rating"]))
 rooms = df_cinema["room"].tolist()
 movies = df_movies["id"].tolist()
 
-# ========== 2. 电影信息预处理（genres_set用逗号分割成集合） ==========
+# ========== 2. 电影信息预处理（多genre支持） ==========
 movie_info = {}
 for _, row in df_movies.iterrows():
     mid = row["id"]
@@ -45,7 +46,7 @@ for _, row in df_cinema.iterrows():
         room_info[rid]["versions"].append("IMAX")
 
 
-# ========== 4. 全部可用时间点 ==========
+# ========== 4. 可用时间点 ==========
 def generate_time_slots(start=600, end=1800, step=15):
     return [i for i in range(start, end, step)]
 
@@ -95,7 +96,7 @@ def format_time(minutes):
     return f"{hour:02d}:{minute:02d}"
 
 
-# ========== 6. 检查所有硬约束（含多题材） ==========
+# ========== 6. 硬约束判定（多genre,高效） ==========
 def is_feasible(schedule):
     # a. 每厅同一时间不重叠，每两场间隔≥15min
     for room in schedule:
@@ -135,7 +136,7 @@ def is_feasible(schedule):
                 total += movie_info[m2]["runtime"]
             if total > 420:  # 7小时=420min
                 return False
-    # d. 题材播放次数上下限（多题材）
+    # d. 题材播放次数上下限（多题材全计）
     genre_count = {}
     for room in schedule:
         for show in schedule[room]:
@@ -169,7 +170,7 @@ def is_feasible(schedule):
     return True
 
 
-# ========== 7. 计算净收益 ==========
+# ========== 7. 净收益 ==========
 def compute_objective(schedule):
     obj = 0
     for room in schedule:
@@ -183,7 +184,7 @@ def compute_objective(schedule):
     return obj
 
 
-# ========== 8. 生成初始解（贪心，评分高优先） ==========
+# ========== 8. 初始解（高分优先） ==========
 def generate_initial_solution():
     schedule = {room: [] for room in rooms}
     movies_sorted = sorted(movies, key=lambda m: rating_dict[m], reverse=True)
@@ -208,68 +209,80 @@ def generate_initial_solution():
     return schedule
 
 
-# ========== 9. 邻域操作 ==========
-def neighbor(schedule):
+# ========== 9. 高效邻域扰动 ==========
+def neighbor_efficient(schedule):
     new_schedule = copy.deepcopy(schedule)
     room = random.choice(rooms)
     if not new_schedule[room]:
         return new_schedule
     idx = random.randint(0, len(new_schedule[room]) - 1)
-    old = new_schedule[room][idx]
-    actions = ["movie", "version", "time"]
-    action = random.choice(actions)
-    if action == "movie":
-        cands = []
-        for m in movies:
-            for v in movie_info[m]["versions"]:
-                if v in room_info[room]["versions"]:
-                    cands.append((m, v))
+    old_show = new_schedule[room][idx]
+    action = random.choices(["time", "movie", "version"], [0.5, 0.3, 0.2])[0]
+    if action == "time":
+        old_show["time"] = random.choice(time_slots)
+    elif action == "movie":
+        cands = [
+            (m, v)
+            for m in movies
+            for v in movie_info[m]["versions"]
+            if v in room_info[room]["versions"]
+        ]
         m, v = random.choice(cands)
-        new_schedule[room][idx]["movie"] = m
-        new_schedule[room][idx]["version"] = v
-    elif action == "version":
-        m = old["movie"]
+        old_show["movie"] = m
+        old_show["version"] = v
+    else:  # version
+        m = old_show["movie"]
         versions = [
             v for v in movie_info[m]["versions"] if v in room_info[room]["versions"]
         ]
-        new_schedule[room][idx]["version"] = random.choice(versions)
-    elif action == "time":
-        new_schedule[room][idx]["time"] = random.choice(time_slots)
+        old_show["version"] = random.choice(versions)
     return new_schedule
 
 
-# ========== 10. 模拟退火主流程 ==========
-def simulated_annealing(max_iter=1000, T0=1500, Tmin=1e-3, alpha=0.97):
+# ========== 10. 模拟退火+并行 ==========
+def simulated_annealing_fast(seed, max_iter=200, T0=1000, Tmin=1e-3, alpha=0.97):
+    random.seed(seed)
     curr = generate_initial_solution()
     while not is_feasible(curr):
         curr = generate_initial_solution()
     curr_score = compute_objective(curr)
     best, best_score = copy.deepcopy(curr), curr_score
     T = T0
-    pbar = tqdm(range(max_iter))
-    for step in pbar:
+    for step in range(max_iter):
+        improved = False
         for _ in range(20):
-            next_sol = neighbor(curr)
+            next_sol = neighbor_efficient(curr)
             if not is_feasible(next_sol):
                 continue
             next_score = compute_objective(next_sol)
             dE = next_score - curr_score
             if dE > 0 or np.exp(dE / (T + 1e-6)) > random.random():
                 curr, curr_score = next_sol, next_score
+                improved = True
                 if curr_score > best_score:
                     best, best_score = copy.deepcopy(curr), curr_score
-        T *= alpha
-        pbar.set_description(f"T={T:.2f}, BestNetProfit={best_score:.2f}")
+        if not improved:
+            T *= alpha * 0.98
+        else:
+            T *= alpha
         if T < Tmin:
             break
     return best, best_score
 
 
-# ========== 11. 运行并输出 ==========
+def parallel_sa(runs=4):
+    with mp.Pool(runs) as pool:
+        results = pool.starmap(
+            simulated_annealing_fast, [(i, 200, 1000, 1e-3, 0.97) for i in range(runs)]
+        )
+    best_schedule, best_score = max(results, key=lambda x: x[1])
+    return best_schedule, best_score
+
+
+# ========== 11. 主流程 ==========
 if __name__ == "__main__":
-    best_schedule, best_score = simulated_annealing(
-        max_iter=400, T0=1500, Tmin=0.5, alpha=0.97
-    )
+    # 你可以调整runs为你的CPU核心数，比如4/8/16
+    best_schedule, best_score = parallel_sa(runs=4)
     print("最优净收益：", best_score)
     result = []
     for room in best_schedule:
