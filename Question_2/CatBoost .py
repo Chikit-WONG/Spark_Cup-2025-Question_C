@@ -35,6 +35,10 @@ for col in num_cols:
 # CatBoost支持字符串类别，直接用即可
 feature_cols = ["runtime", "original_language", "genres", "director"]
 
+# 要获取所有类别特征，可以用下面的代码，把上面的注释掉
+# # 自动获取所有特征列（排除 id 和 rating）
+# feature_cols = [col for col in train.columns if col not in ['id', 'rating']]
+
 # 4. 划分训练/验证集（仅用于本地调参）
 X_train, X_val, y_train, y_val = train_test_split(
     train[feature_cols], train["rating"], test_size=0.2, random_state=42
