@@ -135,3 +135,10 @@ test_pred = xgb_model.predict(test[all_features])
 result = pd.DataFrame({"id": test["id"], "rating": np.round(test_pred, 2)})
 result.to_csv("./Data/output_result/df_result_1.csv", index=False)
 print("已保存预测结果到 ./Data/output_result/df_result_1.csv")
+
+# 10. 计算测试集RMSE（用df_movies_schedule.csv的真实标签）
+schedule = pd.read_csv("./Data/input_data/df_movies_schedule.csv")[["id", "rating"]]
+test_result = pd.DataFrame({"id": test["id"], "pred": test_pred})
+merged = pd.merge(test_result, schedule, on="id", how="inner")
+rmse_test = np.sqrt(mean_squared_error(merged["rating"], merged["pred"]))
+print(f"测试集RMSE: {rmse_test:.4f}")

@@ -11,6 +11,7 @@ from lightgbm import LGBMRegressor
 # 1. 读取数据
 train = pd.read_csv("./Data/input_data/df_movies_train.csv")
 test = pd.read_csv("./Data/input_data/df_movies_test.csv")
+test_truth = pd.read_csv("./Data/input_data/df_movies_schedule.csv")[["id", "rating"]]
 
 
 # 2. 特征工程（和前文一致，按你的结论来）
@@ -101,6 +102,15 @@ X_train, X_val, y_train, y_val = train_test_split(
 
 results = {}
 
+
+def calc_test_rmse(model, test, all_features, test_truth, model_name):
+    test_pred = model.predict(test[all_features])
+    pred_df = pd.DataFrame({"id": test["id"], "pred": test_pred})
+    merged = pd.merge(pred_df, test_truth, on="id", how="inner")
+    rmse = np.sqrt(mean_squared_error(merged["rating"], merged["pred"]))
+    return rmse
+
+
 # 7. CatBoost
 cat_features_idx = [all_features.index(col) for col in cat_cols if col in all_features]
 cat_model = CatBoostRegressor(
@@ -108,8 +118,8 @@ cat_model = CatBoostRegressor(
     learning_rate=0.08,
     depth=7,
     loss_function="RMSE",
-    # verbose=0,
     random_seed=42,
+    verbose=0,
 )
 cat_model.fit(
     X_train,
@@ -120,7 +130,8 @@ cat_model.fit(
 )
 cat_val_pred = cat_model.predict(X_val)
 cat_rmse = np.sqrt(mean_squared_error(y_val, cat_val_pred))
-results["CatBoost"] = cat_rmse
+cat_test_rmse = calc_test_rmse(cat_model, test, all_features, test_truth, "CatBoost")
+results["CatBoost"] = (cat_rmse, cat_test_rmse)
 
 # 8. XGBoost
 xgb_model = XGBRegressor(
@@ -137,11 +148,11 @@ xgb_model.fit(
     X_train,
     y_train,
     eval_set=[(X_val, y_val)],
-    # verbose=0,
 )
 xgb_val_pred = xgb_model.predict(X_val)
 xgb_rmse = np.sqrt(mean_squared_error(y_val, xgb_val_pred))
-results["XGBoost"] = xgb_rmse
+xgb_test_rmse = calc_test_rmse(xgb_model, test, all_features, test_truth, "XGBoost")
+results["XGBoost"] = (xgb_rmse, xgb_test_rmse)
 
 # 9. LightGBM
 lgbm = LGBMRegressor(
@@ -153,24 +164,25 @@ lgbm = LGBMRegressor(
     bagging_fraction=0.9,
     bagging_freq=1,
     random_state=42,
-    # verbose=-1,
 )
 lgbm.fit(
     X_train,
     y_train,
     eval_set=[(X_val, y_val)],
     eval_metric="rmse",
-    # early_stopping_rounds=30,
     categorical_feature=cat_cols,
-    # verbose=0,
 )
 lgb_val_pred = lgbm.predict(X_val)
 lgb_rmse = np.sqrt(mean_squared_error(y_val, lgb_val_pred))
-results["LightGBM"] = lgb_rmse
+lgb_test_rmse = calc_test_rmse(lgbm, test, all_features, test_truth, "LightGBM")
+results["LightGBM"] = (lgb_rmse, lgb_test_rmse)
 
-# 10. 输出横向对比结果
-print("\n模型对比（RMSE越小越好）:")
-for model, score in sorted(results.items(), key=lambda x: x[1]):
-    print(f"{model:10s}: {score:.4f}")
+# ----------- 分别排序输出 ---------------
 
-# 你可以根据 RMSE 结果，选择最佳模型用于测试集预测与最终输出。
+print("\n按训练集RMSE排序：")
+for model, (train_rmse, test_rmse) in sorted(results.items(), key=lambda x: x[1][0]):
+    print(f"{model:10s} 训练集RMSE: {train_rmse:.4f}   测试集RMSE: {test_rmse:.4f}")
+
+print("\n按测试集RMSE排序：")
+for model, (train_rmse, test_rmse) in sorted(results.items(), key=lambda x: x[1][1]):
+    print(f"{model:10s} 测试集RMSE: {test_rmse:.4f}   训练集RMSE: {train_rmse:.4f}")

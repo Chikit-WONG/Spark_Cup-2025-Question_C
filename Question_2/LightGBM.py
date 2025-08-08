@@ -163,3 +163,15 @@ test_pred = gbm.predict(test[all_features], num_iteration=gbm.best_iteration)
 result = pd.DataFrame({"id": test["id"], "rating": np.round(test_pred, 2)})
 result.to_csv("./Data/output_result/df_result_1.csv", index=False)
 print("已保存预测结果到 ./Data/output_result/df_result_1.csv")
+
+# 10. 计算测试集RMSE（用df_movies_schedule.csv的真实标签）
+# 读取真实标签
+schedule = pd.read_csv("./Data/input_data/df_movies_schedule.csv")[["id", "rating"]]
+
+# 合并测试集预测和真实标签
+test_result = pd.DataFrame({"id": test["id"], "pred": test_pred})
+merged = pd.merge(test_result, schedule, on="id", how="inner")
+
+# 计算并输出测试集RMSE
+rmse_test = np.sqrt(mean_squared_error(merged["rating"], merged["pred"]))
+print(f"测试集RMSE: {rmse_test:.4f}")

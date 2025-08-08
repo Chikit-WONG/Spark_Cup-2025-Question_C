@@ -136,3 +136,15 @@ test_pred = model.predict(test[all_features])
 result = pd.DataFrame({"id": test["id"], "rating": np.round(test_pred, 2)})
 result.to_csv("./Data/output_result/df_result_1.csv", index=False)
 print("已保存预测结果到 ./Data/output_result/df_result_1.csv")
+
+# 10. 计算测试集RMSE（根据真实标签）
+# 读取真实评分文件
+schedule = pd.read_csv("./Data/input_data/df_movies_schedule.csv")[["id", "rating"]]
+test_result = pd.DataFrame({"id": test["id"], "pred": test_pred})
+
+# 按 id 合并预测与真实值
+merged = pd.merge(test_result, schedule, on="id", how="inner")
+
+# 计算并输出测试集RMSE
+rmse_test = np.sqrt(mean_squared_error(merged["rating"], merged["pred"]))
+print(f"测试集RMSE: {rmse_test:.4f}")
