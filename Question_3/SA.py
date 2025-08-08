@@ -1,3 +1,4 @@
+# 模拟退火算法，全数据批量运行，所有约束条件
 import pandas as pd
 import numpy as np
 import random
